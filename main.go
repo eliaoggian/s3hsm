@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -158,6 +159,60 @@ func doGet(ci *util.ConnectionParams, filePath string, s3uri string) {
 
 	bucketName := path.Dir(u.Path)[1:] // strip leading slash
 	objectName := path.Base(u.Path)
+
+	// Check storage class and restore if needed
+	headObj, err := s3client.HeadObject(
+		&s3.HeadObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectName),
+		})
+	if err != nil {
+		log.Fatalf("Failed to head object: %v\n", err)
+	}
+
+	storageClass := ""
+	if headObj.StorageClass != nil {
+		storageClass = *headObj.StorageClass
+	}
+
+	if storageClass == "GLACIER" || storageClass == "DEEP_ARCHIVE" || storageClass == "GLACIER_IR" {
+		// Check if restore is already in progress or completed
+		restoring := false
+		if headObj.Restore != nil && *headObj.Restore != "" {
+			// Example: ongoing-request="true"
+			if headObj.Restore != nil && strings.Contains(*headObj.Restore, "ongoing-request=\"true\"") {
+				restoring = true
+			}
+		}
+
+		if !restoring {
+			// If Restore field exists and ongoing-request="false", restore is done
+			if headObj.Restore != nil && strings.Contains(*headObj.Restore, "ongoing-request=\"false\"") {
+				// Restore is complete, proceed to download
+				DEBUG.Printf("Restore completed for object %s, proceeding to download.\n", objectName)
+			} else {
+				// Initiate restore request (default 1 day)
+				_, err := s3client.RestoreObject(&s3.RestoreObjectInput{
+					Bucket: aws.String(bucketName),
+					Key:    aws.String(objectName),
+					RestoreRequest: &s3.RestoreRequest{
+						Days: aws.Int64(1),
+						GlacierJobParameters: &s3.GlacierJobParameters{
+							Tier: aws.String("Standard"),
+						},
+					},
+				})
+				if err != nil {
+					log.Fatalf("Failed to initiate restore request: %v\n", err)
+				}
+				log.Printf("Restore request initiated for object %s in GLACIER storage class. Please retry after restore completes.\n", objectName)
+				return
+			}
+		} else {
+			log.Printf("Object %s is being restored from GLACIER. Please retry after restore completes.\n", objectName)
+			return
+		}
+	}
 
 	start := time.Now()
 	resp, err := s3client.GetObject(
