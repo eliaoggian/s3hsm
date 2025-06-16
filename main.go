@@ -178,11 +178,8 @@ func doGet(ci *util.ConnectionParams, filePath string, s3uri string) {
 	if storageClass == "GLACIER" || storageClass == "DEEP_ARCHIVE" || storageClass == "GLACIER_IR" {
 		// Check if restore is already in progress or completed
 		restoring := false
-		if headObj.Restore != nil && *headObj.Restore != "" {
-			// Example: ongoing-request="true"
-			if headObj.Restore != nil && strings.Contains(*headObj.Restore, "ongoing-request=\"true\"") {
-				restoring = true
-			}
+		if headObj.Restore != nil && strings.Contains(*headObj.Restore, "ongoing-request=\"true\"") {
+			restoring = true
 		}
 
 		if !restoring {
