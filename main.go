@@ -176,38 +176,44 @@ func doGet(ci *util.ConnectionParams, filePath string, s3uri string) {
 	}
 
 	if storageClass == "GLACIER" || storageClass == "DEEP_ARCHIVE" || storageClass == "GLACIER_IR" {
-		// Check if restore is already in progress or completed
-		restoring := false
-		if headObj.Restore != nil && strings.Contains(*headObj.Restore, "ongoing-request=\"true\"") {
-			restoring = true
+
+		if headObj.Restore == nil {
+			// If Restore field is nil, it means the object is not restored yet
+			log.Printf("Object %s is in %s storage class and not restored yet. Initiating restore request.\n", objectName, storageClass)
+			// Initiate restore request (default 1 day)
+			_, err := s3client.RestoreObject(&s3.RestoreObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(objectName),
+				RestoreRequest: &s3.RestoreRequest{
+					Days: aws.Int64(1), // Default restore duration is 1 day
+					GlacierJobParameters: &s3.GlacierJobParameters{
+						Tier: aws.String("Standard"), // Default tier is Standard
+					},
+				},
+			})
+			if err != nil {
+				log.Fatalf("Failed to initiate restore request: %v\n", err)
+			}
+			log.Printf("Restore request initiated for object %s in GLACIER storage class. Please retry after restore completes.\n", objectName)
 		}
 
-		if !restoring {
-			// If Restore field exists and ongoing-request="false", restore is done
-			if headObj.Restore != nil && strings.Contains(*headObj.Restore, "ongoing-request=\"false\"") {
-				// Restore is complete, proceed to download
-				DEBUG.Printf("Restore completed for object %s, proceeding to download.\n", objectName)
-			} else {
-				// Initiate restore request (default 1 day)
-				_, err := s3client.RestoreObject(&s3.RestoreObjectInput{
+		// Wait until the restore is complete
+		for {
+			time.Sleep(5 * time.Second)
+			headObj, err = s3client.HeadObject(
+				&s3.HeadObjectInput{
 					Bucket: aws.String(bucketName),
 					Key:    aws.String(objectName),
-					RestoreRequest: &s3.RestoreRequest{
-						Days: aws.Int64(1),
-						GlacierJobParameters: &s3.GlacierJobParameters{
-							Tier: aws.String("Standard"),
-						},
-					},
 				})
-				if err != nil {
-					log.Fatalf("Failed to initiate restore request: %v\n", err)
-				}
-				log.Printf("Restore request initiated for object %s in GLACIER storage class. Please retry after restore completes.\n", objectName)
-				return
+			if err != nil {
+				log.Fatalf("Failed to head object during restore wait: %v\n", err)
 			}
-		} else {
-			log.Printf("Object %s is being restored from GLACIER. Please retry after restore completes.\n", objectName)
-			return
+			if headObj.Restore != nil && strings.Contains(*headObj.Restore, "ongoing-request=\"false\"") {
+				DEBUG.Printf("Restore completed for object %s, proceeding to download.\n", objectName)
+				break
+			}
+			log.Printf("Waiting for restore of object %s to complete...\n", objectName)
+
 		}
 	}
 
