@@ -199,7 +199,7 @@ func doGet(ci *util.ConnectionParams, filePath string, s3uri string) {
 
 		// Wait until the restore is complete
 		for {
-			time.Sleep(5 * time.Second)
+			time.Sleep(10 * time.Second)
 			headObj, err = s3client.HeadObject(
 				&s3.HeadObjectInput{
 					Bucket: aws.String(bucketName),
@@ -212,8 +212,6 @@ func doGet(ci *util.ConnectionParams, filePath string, s3uri string) {
 				DEBUG.Printf("Restore completed for object %s, proceeding to download.\n", objectName)
 				break
 			}
-			log.Printf("Waiting for restore of object %s to complete...\n", objectName)
-
 		}
 	}
 
